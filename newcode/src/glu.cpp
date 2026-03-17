@@ -21,13 +21,13 @@ class GLU
     {
         Mat2i  idx;
         Mat1f  w;
-        const Mat3b& large;
-        Mat3b&       small;
+        const Mat3f& large;
+        Mat3f&       small;
         int     sstride, swidth;
         int     idxOffset[9];
 
     public:
-        Builder(const Mat3b* _large, Mat3b* _small)
+        Builder(const Mat3f* _large, Mat3f* _small)
             : large(*_large), small(*_small)
         {
             idx.create(large.size());
@@ -35,7 +35,7 @@ class GLU
 
             CV_Assert(nofill(*_large) && nofill(*_small) && nofill(idx) && nofill(w));
 
-            sstride = small.step, swidth = small.cols;
+            sstride = small.cols * 3, swidth = small.cols;
             const int _idxOffset[] = { -swidth - 1,-swidth,-swidth + 1,-1,0,1,swidth - 1,swidth,swidth + 1 };
             memcpy(idxOffset, _idxOffset, sizeof(idxOffset));
         }
@@ -45,11 +45,11 @@ class GLU
             return x <= 0 ? 1 : x >= width - 1 ? width - 2 : x;
         }
 
-        static float getInterpError(const uchar* c, const uchar* F, const uchar* B, float w) {
+        static float getInterpError(const float* c, const float* F, const float* B, float w) {
             float err = 0;
             for (int i = 0; i < 3; ++i)
             {
-                float d = B[i] + w * (float(F[i]) - B[i]) - c[i];
+                float d = B[i] + w * (F[i] - B[i]) - c[i];
                 err += fabs(d);
             }
             return err;
@@ -59,21 +59,21 @@ class GLU
         {
             Mat1b err(large.size());
 
-            CV_Assert(small.depth() == CV_8U);
-            if (small.step != small.channels() * small.cols)
+            CV_Assert(small.depth() == CV_32F);
+            if (small.step != small.channels() * small.cols * sizeof(float))
                 small = small.clone();
-            CV_Assert(small.step == small.channels() * small.cols);
+            CV_Assert(small.step == small.channels() * small.cols * sizeof(float));
 
-            const uchar* smallData = small.data;
+            const float* smallData = (const float*)small.data;
             const int cn = small.channels();
 
             for (int y = 0; y < idx.rows; ++y) {
                 for (int x = 0; x < idx.cols; ++x) {
                     const int* idxPtr = idx.ptr<int>(y, x);
                     float wVal = w.at<float>(y, x);
-                    const uchar* c = large.ptr<uchar>(y, x);
-                    const uchar* p = smallData + idxPtr[0] * cn;
-                    const uchar* q = smallData + idxPtr[1] * cn;
+                    const float* c = large.ptr<float>(y, x);
+                    const float* p = smallData + idxPtr[0] * cn;
+                    const float* q = smallData + idxPtr[1] * cn;
                     float e = getInterpError(c, p, q, wVal);
                     err.at<uchar>(y, x) = uchar(e / 3.f);
                 }
@@ -83,10 +83,10 @@ class GLU
 
         float update_linear_fast(int pi, int qi)
         {
-            const uchar* p = large.data + pi * 3;
-            const uchar* q = small.data + qi * 3;
+            const float* p = (const float*)large.data + pi * 3;
+            const float* q = (const float*)small.data + qi * 3;
 
-            const uchar* qnbr[] = { q - sstride - 3,q - sstride, q - sstride + 3, q - 3, q, q + 3, q + sstride - 3, q + sstride, q + sstride + 3 };
+            const float* qnbr[] = { q - sstride - 3,q - sstride, q - sstride + 3, q - 3, q, q + 3, q + sstride - 3, q + sstride, q + sstride + 3 };
             float vdiff[9];
 
             float minErr = FLT_MAX, wm = 0;
@@ -94,9 +94,9 @@ class GLU
 
             for (int i = 0; i < 9; ++i)
             {
-                const uchar* a = qnbr[i];
-                int dv[] = { int(p[0]) - a[0], int(p[1]) - a[1], int(p[2]) - a[2] };
-                vdiff[i] = sqrt(float(dv[0] * dv[0] + dv[1] * dv[1] + dv[2] * dv[2]) + 1e-3f);
+                const float* a = qnbr[i];
+                float dv[] = { p[0] - a[0], p[1] - a[1], p[2] - a[2] };
+                vdiff[i] = sqrt(dv[0] * dv[0] + dv[1] * dv[1] + dv[2] * dv[2] + 1e-3f);
                 if (vdiff[i] < minErr)
                 {
                     minErr = vdiff[i];
@@ -125,19 +125,19 @@ class GLU
 
         float update_linear_full(int pi, int qi)
         {
-            const uchar* p = large.data + pi * 3;
-            const uchar* q = small.data + qi * 3;
+            const float* p = (const float*)large.data + pi * 3;
+            const float* q = (const float*)small.data + qi * 3;
 
-            const uchar* qnbr[] = { q - sstride - 3,q - sstride, q - sstride + 3, q - 3, q, q + 3, q + sstride - 3, q + sstride, q + sstride + 3 };
+            const float* qnbr[] = { q - sstride - 3,q - sstride, q - sstride + 3, q - 3, q, q + 3, q + sstride - 3, q + sstride, q + sstride + 3 };
 
             float minErr = FLT_MAX, wm = 0;
             int im = -1, jm = -1;
             for (int i = 0; i < 9; ++i)
                 for (int j = i + 1; j < 9; ++j)
                 {
-                    const uchar* a = qnbr[i], * b = qnbr[j];
-                    Vec3f dab(float(a[0]) - b[0], float(a[1]) - b[1], float(a[2]) - b[2]);
-                    Vec3f dpb(float(p[0]) - b[0], float(p[1]) - b[1], float(p[2]) - b[2]);
+                    const float* a = qnbr[i], * b = qnbr[j];
+                    Vec3f dab(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+                    Vec3f dpb(p[0] - b[0], p[1] - b[1], p[2] - b[2]);
                     float w = dab.dot(dpb) / dab.dot(dab);
                     if (w < 0.f)
                         w = 0.f;
@@ -200,15 +200,16 @@ class GLU
 
     static Mat _downsample(const Mat& large, const Mat1i& smallIdx)
     {
-        CV_Assert(large.depth() == CV_8U && large.step == large.cols * large.channels());
+        std::cout << "_downsample: depth=" << large.depth() << ", type=" << large.type() << ", channels=" << large.channels() << std::endl;
+        CV_Assert(large.depth() == CV_32F && large.step == large.cols * large.channels() * sizeof(float));
         const int cn = large.channels();
-        const uchar* largeData = large.data;
+        const float* largeData = (const float*)large.data;
         Mat small(smallIdx.size(), large.type());
         for (int y = 0; y < small.rows; ++y) {
             for (int x = 0; x < small.cols; ++x) {
                 int idx = smallIdx.at<int>(y, x);
-                const uchar* src = largeData + idx * cn;
-                uchar* dst = small.ptr<uchar>(y, x);
+                const float* src = largeData + idx * cn;
+                float* dst = small.ptr<float>(y, x);
                 for (int j = 0; j < cn; ++j)
                     dst[j] = src[j];
             }
@@ -219,42 +220,51 @@ class GLU
 public:
     Mat upsample(Mat small)
     {
+        std::cout << "upsample: size=" << small.size() << ", depth=" << small.depth() << ", type=" << small.type() << std::endl;
         CV_Assert(small.size() == _downsampleIdx.size());
 
-        Mat large(_upsampleIdx.size(), small.type());
-        CV_Assert(small.depth() == CV_8U);
-        if (small.step != small.channels() * small.cols)
+        std::cout << "creating large Mat..." << std::endl;
+        Mat largeImg(_upsampleIdx.size(), small.type());
+        std::cout << "large created, type=" << largeImg.type() << std::endl;
+        CV_Assert(small.depth() == CV_32F);
+        
+        std::cout << "checking small step..." << std::endl;
+        if (small.step != small.channels() * small.cols * sizeof(float))
             small = small.clone();
-        CV_Assert(small.step == small.channels() * small.cols);
+        CV_Assert(small.step == small.channels() * small.cols * sizeof(float));
 
-        const uchar* smallData = small.data;
+        std::cout << "getting smallData..." << std::endl;
+        const float* smallData = (const float*)small.data;
         const int cn = small.channels();
 
+        std::cout << "starting loop, rows=" << _upsampleIdx.rows << ", cols=" << _upsampleIdx.cols << std::endl;
         for (int y = 0; y < _upsampleIdx.rows; ++y) {
             for (int x = 0; x < _upsampleIdx.cols; ++x) {
                 const int* idxPtr = _upsampleIdx.ptr<int>(y, x);
                 float wVal = _upsampleW.at<float>(y, x);
-                uchar* c = large.ptr<uchar>(y, x);
-                const uchar* p = smallData + idxPtr[0] * cn;
-                const uchar* q = smallData + idxPtr[1] * cn;
+                float* c = largeImg.ptr<float>(y, x);
+                const float* p = smallData + idxPtr[0] * cn;
+                const float* q = smallData + idxPtr[1] * cn;
                 for (int i = 0; i < cn; ++i)
-                    c[i] = uchar(q[i] + wVal * (int(p[i]) - q[i]));
+                    c[i] = q[i] + wVal * (p[i] - q[i]);
             }
         }
-        return large;
+        std::cout << "returning..." << std::endl;
+        return largeImg;
     }
 
     Mat downsample(Mat large)
     {
         CV_Assert(large.size() == _upsampleIdx.size());
+        CV_Assert(large.depth() == CV_32F);
         return this->_downsample(large, _downsampleIdx);
     }
 
-    Mat3b build(const Mat3b& large, double downscale, bool optimizeDownsample = true, int errT = 30, int regionSizeT = 5, int maxItr = 2)
+    Mat3f build(const Mat3f& large, double downscale, bool optimizeDownsample = true, int errT = 30, int regionSizeT = 5, int maxItr = 2)
     {
         Mat1i smallIdx, largeIdx;
         this->_initSampleIndex(large.size(), downscale, smallIdx, largeIdx);
-        Mat3b small = _downsample(large, smallIdx);
+        Mat3f small = _downsample(large, smallIdx);
 
         Builder builder(&large, &small);
 
@@ -393,8 +403,8 @@ public:
                 float* wData = (float*)builder.w.data;
                 CV_Assert(nofill(err) && nofill(largeIdx) && nofill(builder.idx) && nofill(builder.w));
 
-                Vec3b* smallDataPtr = (Vec3b*)small.data;
-                const Vec3b* largeDataPtr = (const Vec3b*)large.data;
+                Vec3f* smallDataPtr = (Vec3f*)small.data;
+                const Vec3f* largeDataPtr = (const Vec3f*)large.data;
                 Mat1b _smallBuf = Mat1b::zeros(small.size());
                 uchar* smallBuf = (uchar*)_smallBuf.data;
                 CV_Assert(nofill(small) && nofill(large) && nofill(_smallBuf));
@@ -512,64 +522,87 @@ public:
 void glu_self_upsampling()
 {
     std::string file = "images/img01.png";
-    Mat3b large = imread(file);
+    Mat3b large8 = imread(file);
 
-    if (large.empty()) {
+    if (large8.empty()) {
         std::cerr << "Failed to load image: " << file << std::endl;
         return;
     }
 
+    Mat3f large;
+    large8.convertTo(large, CV_32F, 1.0 / 255.0);
+
     double ratio = 1.0 / 4;
+    int test  = 255;
 
     GLU glu;
-    Mat3b small = glu.build(large, ratio);
+    Mat3f small = glu.build(large, ratio);
+    std::cout << "Calling upsample..." << std::endl;
+    Mat3f upsampled = glu.upsample(small);
+    std::cout << "upsample returned, checking small..." << std::endl;
+        std::cout << "  small: size=" << small.size() << ", step=" << small.step << ", elemSize=" << small.elemSize() << ", expectedStep=" << small.cols * small.elemSize() << std::endl;
+    std::cout << "  large: size=" << large.size() << std::endl;
+    std::cout << "Calling resize..." << std::endl;
+    Mat smallScaled8, upsampled8;
+    smallScaled8.create(large.size(), CV_8UC3);
+    std::cout << "Created smallScaled8, calling resize..." << std::endl;
+    cv::resize(small, smallScaled8, large.size(), 0, 0, INTER_NEAREST);
+    std::cout << "resize done, now convert..." << std::endl;
+    upsampled.convertTo(upsampled8, CV_8U, 255.0);
+    std::cout << "convert done" << std::endl;
 
-    Mat3b upsampled = glu.upsample(small);
-
-    Mat3b smallScaled;
-    cv::resize(small, smallScaled, large.size(), 0, 0, INTER_NEAREST);
-
-    imshow("input", large);
-    imshow("downsampled", smallScaled);
-    imshow("upsampled", upsampled);
-    cv::imwrite("images/input.png", large);
-    cv::imwrite("images/downsampled.png", smallScaled);
-    cv::imwrite("images/upsampled.png", upsampled);
+    imshow("input", large8);
+    imshow("downsampled", smallScaled8);
+    imshow("upsampled", upsampled8);
+    cv::imwrite("images/input.png", large8);
+    cv::imwrite("images/downsampled.png", smallScaled8);
+    cv::imwrite("images/upsampled.png", upsampled8);
     cv::waitKey();
 }
 
 void glu_guided_upsampling()
 {
-    Mat3b source = imread("images/img01.png");
-    Mat   target = imread("images/alpha01.png", IMREAD_GRAYSCALE);
+    Mat3b source8 = imread("images/img01.png");
+    Mat   target8 = imread("images/alpha01.png", IMREAD_GRAYSCALE);
 
-    if (source.empty() || target.empty()) {
+    if (source8.empty() || target8.empty()) {
         std::cerr << "Failed to load images" << std::endl;
         return;
     }
+
+    Mat3f source;
+    source8.convertTo(source, CV_32F, 1.0 / 255.0);
+
+    Mat1f target;
+    target8.convertTo(target, CV_32F, 1.0 / 255.0);
 
     double ratio = 1.0 / 4;
 
     GLU glu;
 
-    Mat3b smallSource = glu.build(source, ratio);
+    Mat3f smallSource = glu.build(source, ratio);
     Mat smallTarget;
 
     smallTarget = glu.downsample(target);
 
-    Mat1b linearUpsampled;
+    Mat1f linearUpsampled;
     cv::resize(smallTarget, linearUpsampled, source.size(), 0, 0, INTER_LINEAR);
 
-    imshow("linearUpsampled", linearUpsampled);
-    cv::imwrite("images/linearUpsampled.png", linearUpsampled);
+    Mat1b linearUpsampled8;
+    linearUpsampled.convertTo(linearUpsampled8, CV_8U, 255.0);
+
+    imshow("linearUpsampled", linearUpsampled8);
+    cv::imwrite("images/linearUpsampled.png", linearUpsampled8);
     cv::waitKey();
-    imshow("reference", target);
-    cv::imwrite("images/reference.png", target);
+    imshow("reference", target8);
+    cv::imwrite("images/reference.png", target8);
     cv::waitKey();
 
-    Mat1b upsampledTarget = glu.upsample(smallTarget);
-    imshow("upsampledTarget", upsampledTarget);
-    cv::imwrite("images/upsampledTarget.png", upsampledTarget);
+    Mat1f upsampledTarget = glu.upsample(smallTarget);
+    Mat1b upsampledTarget8;
+    upsampledTarget.convertTo(upsampledTarget8, CV_8U, 255.0);
+    imshow("upsampledTarget", upsampledTarget8);
+    cv::imwrite("images/upsampledTarget.png", upsampledTarget8);
 
     cv::waitKey();
 }
